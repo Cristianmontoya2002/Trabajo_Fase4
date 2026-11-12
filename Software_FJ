@@ -464,11 +464,6 @@ def ejecutar_demo() -> None:
           f"{len(sistema.servicios)} servicio(s), {len(sistema.reservas)} reserva(s).")
     print(f"Eventos y errores registrados en: {LOG_FILE}")
 
-PARTE 3 DE 3 — INTERFAZ GRÁFICA CON TKINTER
-Este módulo presenta las operaciones de SistemaFJ mediante ventanas y formularios.
-La lógica de negocio permanece en modelos.py y gestion.py.
-"""
-
 import tkinter as tk  # Biblioteca estándar para crear interfaces gráficas.
 from tkinter import ttk, messagebox, simpledialog  # Controles y cuadros de diálogo de Tkinter.
 from contextlib import redirect_stdout  # Permite capturar la salida de la demostración.
