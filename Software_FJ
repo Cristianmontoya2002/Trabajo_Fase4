@@ -480,8 +480,8 @@ class AplicacionFJ:
     def __init__(self, ventana: tk.Tk):
         self.ventana = ventana  # Guarda la ventana principal.
         self.ventana.title("SOFTWARE FJ | Gestión de clientes, servicios y reservas")
-        self.ventana.geometry("1050x650")  # Define el tamaño inicial de la ventana.
-        self.ventana.minsize(850, 550)  # Evita que la ventana sea demasiado pequeña.
+        self.ventana.geometry("950x550")  # Define el tamaño inicial de la ventana.
+        self.ventana.minsize(650, 350)  # Evita que la ventana sea demasiado pequeña.
         self.sistema = SistemaFJ()  # Crea la instancia que conserva los datos en memoria.
         self._crear_interfaz()  # Construye los controles visuales.
 
