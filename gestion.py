@@ -1,0 +1,311 @@
+from __future__ import annotations  # Permite usar anotaciones de tipos que se resuelven posteriormente.
+
+from abc import ABC, abstractmethod  # Proporciona clases y métodos abstractos.
+from dataclasses import dataclass, field  # Facilita la creación de entidades con atributos.
+from datetime import datetime  # Permite registrar la fecha y hora de creación.
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP  # Maneja importes monetarios con precisión.
+from enum import Enum  # Define estados constantes para las reservas.
+import logging  # Registra eventos y errores.
+from pathlib import Path  # Construye rutas de archivos compatibles con el sistema operativo.
+from typing import Any  # Permite indicar que un parámetro admite distintos tipos.
+from uuid import uuid4  # Genera identificadores únicos.
+
+# Determina la carpeta donde se encuentra este archivo.
+BASE_DIR = Path(__file__).resolve().parent
+# Define el archivo donde se guardarán los registros del sistema.
+LOG_FILE = BASE_DIR / "software_fj.log"
+
+# Crea el registrador principal de la aplicación.
+logger = logging.getLogger("software_fj")
+# Establece el nivel mínimo de eventos que se registrarán.
+logger.setLevel(logging.INFO)
+# Evita agregar varias veces el mismo controlador de archivo.
+if not logger.handlers:
+    # Crea el archivo de registro usando codificación UTF-8.
+    handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    # Define el formato de fecha, nivel y mensaje de cada registro.
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+    # Conecta el controlador con el registrador.
+    logger.addHandler(handler)
+
+# Excepción general para los errores controlados del sistema.
+class ErrorSistema(Exception):
+    """Error base controlado por la aplicación."""
+
+# Error utilizado cuando un dato no cumple las reglas de validación.
+class ValidacionError(ErrorSistema):
+    pass
+
+# Error utilizado cuando se intenta registrar información duplicada.
+class DuplicadoError(ErrorSistema):
+    pass
+
+# Error utilizado cuando no se encuentra un registro solicitado.
+class NoEncontradoError(ErrorSistema):
+    pass
+
+# Error utilizado cuando una acción no está permitida por el estado actual.
+class OperacionNoPermitidaError(ErrorSistema):
+    pass
+
+# Error utilizado cuando un servicio o recurso no está disponible.
+class DisponibilidadError(ErrorSistema):
+    pass
+
+# Convierte un valor en Decimal y rechaza datos inválidos o negativos.
+def dinero(valor: Any, nombre: str = "valor") -> Decimal:
+    """Convierte a Decimal sin aceptar NaN, infinito ni valores negativos."""
+    try:
+        # Convierte primero a texto para evitar problemas de precisión de float.
+        resultado = Decimal(str(valor))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        # Informa que el valor recibido no representa un número válido.
+        raise ValidacionError(f"{nombre} debe ser un número válido.") from exc
+    # Comprueba que el número sea finito y no sea negativo.
+    if not resultado.is_finite() or resultado < 0:
+        raise ValidacionError(f"{nombre} debe ser finito y no negativo.")
+    # Devuelve el valor validado.
+    return resultado
+
+
+# Presenta un valor monetario con dos decimales y la moneda COP.
+def formato_dinero(valor: Decimal) -> str:
+    return f"${valor.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):,.2f} COP"
+
+
+# Define la entidad abstracta que comparten los objetos principales.
+@dataclass
+class Entidad(ABC):
+    """Entidad abstracta común; cada objeto obtiene un identificador único."""
+    # Genera un identificador de ocho caracteres y evita que se ingrese manualmente.
+    id: str = field(default_factory=lambda: str(uuid4())[:8].upper(), init=False)
+    # Registra automáticamente la fecha y hora de creación.
+    creado_en: datetime = field(default_factory=datetime.now, init=False)
+
+    # Obliga a las clases hijas a implementar una descripción.
+    @abstractmethod
+    def describir(self) -> str:
+        raise NotImplementedError
+
+
+# Representa a cada cliente registrado.
+class Cliente(Entidad):
+    # Recibe los datos básicos y ejecuta la inicialización de la entidad padre.
+    def __init__(self, nombre: str, correo: str, telefono: str):
+        super().__init__()
+        # Asigna los datos mediante propiedades que validan su contenido.
+        self.nombre = nombre
+        self.correo = correo
+        self.telefono = telefono
+
+    # Permite consultar el nombre sin acceder directamente al atributo privado.
+    @property
+    def nombre(self) -> str:
+        return self.__nombre
+
+    # Valida y guarda el nombre del cliente.
+    @nombre.setter
+    def nombre(self, valor: str) -> None:
+        if not isinstance(valor, str) or len(valor.strip()) < 2:
+            raise ValidacionError("El nombre debe tener al menos 2 caracteres.")
+        self.__nombre = valor.strip()
+
+    # Permite consultar el correo electrónico.
+    @property
+    def correo(self) -> str:
+        return self.__correo
+
+    # Comprueba la estructura básica del correo y lo normaliza.
+    @correo.setter
+    def correo(self, valor: str) -> None:
+        if not isinstance(valor, str) or valor.count("@") != 1:
+            raise ValidacionError("El correo debe tener un formato válido.")
+        usuario, dominio = valor.strip().split("@")
+        if not usuario or "." not in dominio or dominio.startswith(".") or dominio.endswith("."):
+            raise ValidacionError("El correo debe tener un formato válido.")
+        self.__correo = valor.strip().lower()
+
+    # Permite consultar el teléfono.
+    @property
+    def telefono(self) -> str:
+        return self.__telefono
+
+    # Limpia y valida el teléfono sin alterar el valor presentado al usuario.
+    @telefono.setter
+    def telefono(self, valor: str) -> None:
+        if not isinstance(valor, str):
+            raise ValidacionError("El teléfono debe ser texto.")
+        limpio = valor.strip().replace("+", "").replace(" ", "").replace("-", "")
+        if not limpio.isdigit() or not 7 <= len(limpio) <= 15:
+            raise ValidacionError("El teléfono debe contener entre 7 y 15 dígitos.")
+        self.__telefono = valor.strip()
+
+    # Devuelve una descripción breve del cliente.
+    def describir(self) -> str:
+        return f"Cliente {self.id}: {self.nombre} <{self.correo}>"
+
+
+# Clase abstracta que agrupa las características comunes de los servicios.
+class Servicio(Entidad, ABC):
+    # Inicializa el nombre, la tarifa y la disponibilidad del servicio.
+    def __init__(self, nombre: str, tarifa: Any):
+        super().__init__()
+        if not isinstance(nombre, str) or not nombre.strip():
+            raise ValidacionError("El servicio requiere un nombre.")
+        self.nombre = nombre.strip()
+        self.tarifa = dinero(tarifa, "tarifa")
+        if self.tarifa == 0:
+            raise ValidacionError("La tarifa debe ser mayor que cero.")
+        self.disponible = True
+
+    # Cada servicio define cómo valida su duración.
+    @abstractmethod
+    def validar_parametros(self, duracion: Any) -> Decimal:
+        """Valida duración y devuelve su valor normalizado."""
+        raise NotImplementedError
+
+    # Cada tipo de servicio define su propia descripción.
+    @abstractmethod
+    def describir(self) -> str:
+        raise NotImplementedError
+
+    # Calcula el valor final aplicando opcionalmente impuesto y descuento.
+    def calcular_costo(self, duracion: Any, impuesto: Any = 0, descuento: Any = 0) -> Decimal:
+        """Variante principal: acepta impuesto y descuento opcionales (0..1)."""
+        unidades = self.validar_parametros(duracion)
+        impuesto_dec = dinero(impuesto, "impuesto")
+        descuento_dec = dinero(descuento, "descuento")
+        if impuesto_dec > 1 or descuento_dec > 1:
+            raise ValidacionError("Impuesto y descuento deben expresarse como proporciones entre 0 y 1.")
+        subtotal = self.tarifa * unidades
+        total = subtotal * (Decimal("1") - descuento_dec) * (Decimal("1") + impuesto_dec)
+        return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    # Ofrece una variante de cálculo que recibe explícitamente el impuesto.
+    def calcular_costo_con_impuesto(self, duracion: Any, impuesto: Any) -> Decimal:
+        """Variante explícita de cálculo; demuestra sobrecarga por métodos alternativos en Python."""
+        return self.calcular_costo(duracion, impuesto=impuesto)
+
+
+# Servicio para reservar salas por horas.
+class ReservaSala(Servicio):
+    def __init__(self, nombre: str, tarifa_hora: Any, capacidad: int):
+        super().__init__(nombre, tarifa_hora)
+        if isinstance(capacidad, bool) or not isinstance(capacidad, int) or capacidad <= 0:
+            raise ValidacionError("La capacidad de la sala debe ser un entero positivo.")
+        self.capacidad = capacidad
+
+    # Acepta duraciones mayores que cero y hasta 24 horas.
+    def validar_parametros(self, duracion: Any) -> Decimal:
+        horas = dinero(duracion, "horas")
+        if horas <= 0 or horas > 24:
+            raise ValidacionError("La reserva de sala debe ser mayor que 0 y máximo 24 horas.")
+        return horas
+
+    # Devuelve la descripción particular de la sala.
+    def describir(self) -> str:
+        return f"Sala '{self.nombre}', capacidad {self.capacidad}, {formato_dinero(self.tarifa)}/hora"
+
+
+# Servicio para alquilar equipos por días.
+class AlquilerEquipo(Servicio):
+    def __init__(self, nombre: str, tarifa_dia: Any, unidades_disponibles: int):
+        super().__init__(nombre, tarifa_dia)
+        if isinstance(unidades_disponibles, bool) or not isinstance(unidades_disponibles, int) or unidades_disponibles < 0:
+            raise ValidacionError("Las unidades disponibles deben ser un entero no negativo.")
+        self.unidades_disponibles = unidades_disponibles
+
+    # Acepta duraciones mayores que cero y hasta 90 días.
+    def validar_parametros(self, duracion: Any) -> Decimal:
+        dias = dinero(duracion, "días")
+        if dias <= 0 or dias > 90:
+            raise ValidacionError("El alquiler debe ser mayor que 0 y máximo 90 días.")
+        return dias
+
+    # Devuelve la descripción particular del equipo.
+    def describir(self) -> str:
+        return f"Equipo '{self.nombre}', {self.unidades_disponibles} unidades, {formato_dinero(self.tarifa)}/día"
+
+
+# Servicio de asesoría profesional por horas.
+class Asesoria(Servicio):
+    def __init__(self, nombre: str, tarifa_hora: Any, especialidad: str):
+        super().__init__(nombre, tarifa_hora)
+        if not isinstance(especialidad, str) or not especialidad.strip():
+            raise ValidacionError("La asesoría requiere una especialidad.")
+        self.especialidad = especialidad.strip()
+
+    # Acepta duraciones mayores que cero y hasta 40 horas.
+    def validar_parametros(self, duracion: Any) -> Decimal:
+        horas = dinero(duracion, "horas")
+        if horas <= 0 or horas > 40:
+            raise ValidacionError("La asesoría debe ser mayor que 0 y máximo 40 horas.")
+        return horas
+
+    # Devuelve la descripción particular de la asesoría.
+    def describir(self) -> str:
+        return f"Asesoría en {self.especialidad}: '{self.nombre}', {formato_dinero(self.tarifa)}/hora"
+
+
+# Enumera los estados posibles de una reserva.
+class EstadoReserva(Enum):
+    PENDIENTE = "Pendiente"
+    CONFIRMADA = "Confirmada"
+    CANCELADA = "Cancelada"
+    PROCESADA = "Procesada"
+
+
+# Representa una reserva asociada a un cliente y a un servicio.
+class Reserva(Entidad):
+    def __init__(self, cliente: Cliente, servicio: Servicio, duracion: Any):
+        super().__init__()
+        if not isinstance(cliente, Cliente):
+            raise ValidacionError("La reserva requiere un cliente válido.")
+        if not isinstance(servicio, Servicio):
+            raise ValidacionError("La reserva requiere un servicio válido.")
+        servicio.validar_parametros(duracion)
+        self.cliente = cliente
+        self.servicio = servicio
+        self.duracion = dinero(duracion, "duración")
+        self.estado = EstadoReserva.PENDIENTE
+        self.total: Decimal | None = None
+
+    # Confirma una reserva pendiente si existe disponibilidad.
+    def confirmar(self) -> None:
+        if self.estado is not EstadoReserva.PENDIENTE:
+            raise OperacionNoPermitidaError("Solo se puede confirmar una reserva pendiente.")
+        if not self.servicio.disponible:
+            raise DisponibilidadError(f"El servicio '{self.servicio.nombre}' no está disponible.")
+        if isinstance(self.servicio, AlquilerEquipo) and self.servicio.unidades_disponibles < 1:
+            raise DisponibilidadError(f"No hay unidades de '{self.servicio.nombre}' disponibles.")
+        self.estado = EstadoReserva.CONFIRMADA
+        if isinstance(self.servicio, AlquilerEquipo):
+            self.servicio.unidades_disponibles -= 1
+        logger.info("Reserva %s confirmada para cliente %s", self.id, self.cliente.id)
+
+    # Cancela una reserva pendiente o confirmada.
+    def cancelar(self) -> None:
+        if self.estado not in (EstadoReserva.PENDIENTE, EstadoReserva.CONFIRMADA):
+            raise OperacionNoPermitidaError("La reserva ya procesada o cancelada no se puede cancelar.")
+        if self.estado is EstadoReserva.CONFIRMADA and isinstance(self.servicio, AlquilerEquipo):
+            self.servicio.unidades_disponibles += 1
+        self.estado = EstadoReserva.CANCELADA
+        logger.info("Reserva %s cancelada", self.id)
+
+    # Liquida una reserva confirmada y guarda su total.
+    def procesar(self, impuesto: Any = 0, descuento: Any = 0) -> Decimal:
+        if self.estado is not EstadoReserva.CONFIRMADA:
+            raise OperacionNoPermitidaError("Solo se puede procesar una reserva confirmada.")
+        try:
+            total = self.servicio.calcular_costo(self.duracion, impuesto, descuento)
+        except (ValidacionError, InvalidOperation) as exc:
+            raise ErrorSistema(f"No fue posible calcular la reserva {self.id}.") from exc
+        self.total = total
+        self.estado = EstadoReserva.PROCESADA
+        logger.info("Reserva %s procesada por %s", self.id, formato_dinero(total))
+        return total
+
+    # Devuelve los datos principales y el importe liquidado, si existe.
+    def describir(self) -> str:
+        importe = formato_dinero(self.total) if self.total is not None else "pendiente de liquidación"
+        return f"Reserva {self.id} | {self.cliente.nombre} | {self.servicio.nombre} | {self.estado.value} | {importe}"
